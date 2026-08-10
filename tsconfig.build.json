@@ -1,0 +1,12 @@
+{
+  // Build config: only the application code, so `dist/index.js` is the
+  // entrypoint. `tsconfig.json` stays broader because it also typechecks the
+  // tests and the scripts.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "tests", "scripts"]
+}

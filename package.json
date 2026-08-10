@@ -1,0 +1,35 @@
+{
+  "name": "dian-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Monitor automático de disponibilidad de citas en el portal de agendamiento de la DIAN (Colombia)",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "monitor": "tsx src/index.ts",
+    "dev": "cross-env HEADLESS=false DRY_RUN=true LOG_LEVEL=debug tsx src/index.ts",
+    "inspect": "cross-env HEADLESS=false tsx scripts/inspect-dian.ts",
+    "telegram:setup": "tsx scripts/telegram-setup.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "playwright:install": "playwright install --with-deps chromium"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "playwright": "^1.62.1",
+    "resend": "^6.4.0",
+    "tsx": "^4.20.6",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "cross-env": "^10.1.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
