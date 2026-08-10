@@ -209,7 +209,12 @@ export function buildTelegramNoAvailability(result: AvailabilityResult, runsCove
     lines.push('', '💬 El calendario no ofrece ningún día con cupo.');
   }
 
-  lines.push('', `🔁 ${revisionsLabel(runsCovered)}`, `Revisado: ${e(detectedAtLabel(result))}`);
+  lines.push(
+    '',
+    `🔁 ${revisionsLabel(runsCovered)}`,
+    `Revisado: ${e(detectedAtLabel(result))}`,
+    `👉 ${PORTAL_URL}`,
+  );
   return lines.join('\n');
 }
 

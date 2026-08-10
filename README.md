@@ -257,6 +257,7 @@ Para configurar Telegram:
 | `npm run inspect` | Muestra las opciones reales del portal ahora mismo |
 | `npm run telegram:setup` | Comprueba el bot y descubre tus `chat_id` |
 | `npm run telegram:setup -- --test` | Además envía un mensaje de prueba |
+| `./scripts/railway-setup.sh` | Despliega en Railway con todo configurado |
 | `npm test` | Tests unitarios |
 | `npm run typecheck` | Verifica los tipos |
 | `npm run build` | Compila a `dist/` |
@@ -348,7 +349,7 @@ Detectado: lunes, 10 de agosto de 2026, 12:35 a. m.
 💬 El portal respondió HTTP 503.
 ```
 
-Todos llevan adjunta la captura de la pantalla final.
+Todos llevan adjunta la captura de la pantalla final y el enlace al portal.
 
 Detalles de implementación que importan:
 
@@ -439,7 +440,48 @@ resumen y quedarte sólo con las alertas.
 
 ## Despliegue en Railway
 
-### 1. Subir el proyecto a GitHub
+### Opción rápida: la CLI (recomendada)
+
+Un script hace todo el trabajo: crea el proyecto y el servicio, sube las
+variables del `.env`, monta el volumen y despliega.
+
+```bash
+npm install -g @railway/cli && railway login
+```
+
+```bash
+./scripts/railway-setup.sh
+```
+
+Es idempotente: vuelve a ejecutarlo cuando cambies una variable o quieras
+redesplegar. Los secretos se envían por `stdin`, así que no aparecen en la
+salida ni en el historial del shell. Dos valores se fuerzan a propósito y nunca
+se copian del `.env` local: `HEADLESS=true` (en Railway no hay pantalla) y
+`DRY_RUN=false` (en producción hay que avisar de verdad).
+
+Después, fija el cron una sola vez:
+
+```bash
+railway api -f - --raw-var "serviceId=$(railway status --json | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["environments"]["edges"][0]["node"]["serviceInstances"]["edges"][0]["node"]["serviceId"])')" --raw-var "environmentId=$(railway status --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["environments"]["edges"][0]["node"]["id"])')" --var 'input={"cronSchedule":"*/5 * * * *","restartPolicyType":"NEVER"}' <<'GQL'
+mutation S($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) { serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input) }
+GQL
+```
+
+O desde la interfaz: servicio → **Settings** → **Cron Schedule** → `*/5 * * * *`,
+y **Restart Policy** en `Never`.
+
+> **Por qué el contenedor corre como root.** Railway monta el volumen como
+> `root` *encima* del directorio que creó la imagen, así que un usuario no
+> privilegiado no puede escribir en él: el estado no se guardaría y el resumen
+> periódico no llegaría nunca. Chromium ya se ejecuta con `--no-sandbox`
+> (obligatorio en cualquier contenedor), así que usar `pwuser` no aportaría
+> aislamiento real.
+
+---
+
+### Opción manual: desde GitHub
+
+#### 1. Subir el proyecto a GitHub
 
 ```bash
 git init && git add . && git commit -m "Monitor de citas DIAN"
@@ -451,7 +493,7 @@ git remote add origin https://github.com/TU_USUARIO/dian-monitor.git && git push
 
 `.env` está en `.gitignore`: los secretos nunca salen de tu máquina.
 
-### 2. Crear el proyecto en Railway
+#### 2. Crear el proyecto en Railway
 
 1. Entra a [railway.app](https://railway.app) e inicia sesión con GitHub.
 2. **New Project → Deploy from GitHub repo**.
@@ -459,7 +501,7 @@ git remote add origin https://github.com/TU_USUARIO/dian-monitor.git && git push
 4. Railway detecta el `Dockerfile` y `railway.json` automáticamente. La primera
    compilación tarda unos minutos (la imagen de Playwright es grande).
 
-### 3. Configurar las variables de entorno
+#### 3. Configurar las variables de entorno
 
 En el servicio → pestaña **Variables** → **Raw Editor**, pega tu configuración
 (sin comentarios) y ajusta los valores:
@@ -480,7 +522,7 @@ NOTIFICATION_COOLDOWN_MINUTES=60
 Nunca escribas secretos en `railway.json`, en el `Dockerfile` ni en el
 repositorio: van únicamente aquí.
 
-### 4. Configurar el Cron
+#### 4. Configurar el Cron
 
 `railway.json` ya trae la programación:
 
@@ -503,7 +545,7 @@ Schedule**. Ten en cuenta que Railway no lanza una nueva ejecución si la
 anterior sigue viva; una ejecución normal tarda entre 10 y 70 segundos, así que
 con 5 minutos hay margen de sobra.
 
-### 5. Ver los logs
+#### 5. Ver los logs
 
 Servicio → pestaña **Deployments** → elige la ejecución → **View Logs**. Busca
 la última línea:
@@ -515,7 +557,7 @@ MONITOR_OK_NO_AVAILABILITY
 En el buscador de logs puedes filtrar por `MONITOR_` para ver de un vistazo el
 historial de resultados, o por `MONITOR_ERROR` para revisar sólo los fallos.
 
-### 6. Probar una ejecución manualmente
+#### 6. Probar una ejecución manualmente
 
 En la interfaz: servicio → menú `⋮` → **Redeploy**. Se ejecuta al instante sin
 esperar al cron.
@@ -533,7 +575,7 @@ railway run npm run monitor
 `railway run` usa las variables del proyecto pero ejecuta en tu máquina, lo cual
 es ideal para comprobar la configuración antes de desplegar.
 
-### 7. Actualizar el proyecto
+#### 7. Actualizar el proyecto
 
 ```bash
 git add . && git commit -m "Ajusta el trámite vigilado" && git push

@@ -25,10 +25,12 @@ COPY scripts ./scripts
 RUN npm run typecheck
 
 # Writable directories for state and diagnostics. Mount a Railway Volume on
-# /app/data if you want the deduplication state to survive restarts.
-RUN mkdir -p /app/data /app/screenshots && chown -R pwuser:pwuser /app
+# /app/data so the deduplication state and the run counter survive restarts.
+RUN mkdir -p /app/data /app/screenshots
 
-# The Playwright image ships this non-root user; use it.
-USER pwuser
-
+# The container runs as root on purpose. A Railway Volume is mounted at runtime
+# owned by root, *over* whatever the image created, so a non-root user cannot
+# write to it — the state file then fails to save and the periodic summary
+# never fires. Chromium already runs with --no-sandbox (required in any
+# container), so switching to `pwuser` would buy no isolation here.
 CMD ["npm", "run", "monitor"]

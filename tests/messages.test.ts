@@ -246,3 +246,33 @@ describe('resumen periódico', () => {
     expect(message).not.toContain('ejecuciones fallando');
   });
 });
+
+describe('enlace al portal', () => {
+  const PORTAL = 'https://agendamiento.dian.gov.co/';
+
+  // El enlace es la acción que se espera del mensaje: debe estar en todos,
+  // también en el resumen rutinario y en el aviso de fallo.
+  it('aparece en el aviso de disponibilidad', () => {
+    expect(buildTelegramReport({ kind: 'available', result: result(), isRepeat: false })).toContain(PORTAL);
+  });
+
+  it('aparece en el resumen periódico', () => {
+    expect(
+      buildTelegramReport({
+        kind: 'unavailable',
+        result: result({ available: false, dates: [] }),
+        runsCovered: 50,
+      }),
+    ).toContain(PORTAL);
+  });
+
+  it('aparece en el aviso de fallo', () => {
+    expect(buildTelegramReport({ kind: 'error', error: 'timeout' })).toContain(PORTAL);
+  });
+
+  it('también en el correo', () => {
+    const email = buildEmail(result());
+    expect(email.text).toContain(PORTAL);
+    expect(email.html).toContain(PORTAL);
+  });
+});
