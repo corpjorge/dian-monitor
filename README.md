@@ -294,14 +294,23 @@ realmente la aplicación:
 | --- | --- | --- |
 | Aparece el modal `No se encontraron especialidades…` | `sin-especialidades` | No |
 | Aparece **otro** mensaje en el modal | `mensaje-desconocido` | **Sí** |
-| No aparece modal y el flujo avanza | `flujo-avanzo` | **Sí** |
+| El portal revela el siguiente control (p. ej. «Trámite» con opciones) | `flujo-avanzo` | **Sí** |
 | Se llega al calendario y hay días con cupo | `fechas-encontradas` | **Sí** |
 | Se llega al calendario y no hay días | `sin-fechas-en-calendario` | No |
+| El portal se queda en «Cargando» / vuelve al splash | — (error `PORTAL_NOT_SETTLED`) | Sólo como fallo |
 
 Es exactamente el criterio pedido: para `Persona Natural → Videoatención →
 Devoluciones`, **cualquier cosa distinta a ese mensaje conocido genera alerta**.
 El texto que cuenta como «sin disponibilidad» se puede cambiar con
 `DIAN_NO_AVAILABILITY_MESSAGE`, por si la DIAN lo reescribe.
+
+Nótese la última fila: el monitor **nunca concluye a partir de una pantalla de
+carga**. Tras cada selección espera a que el portal termine —el overlay
+`#mpcWPdivCargando` («Cargando») y el splash del player cuentan como «todavía no
+respondió»— y sólo entonces lee la pantalla. Si al cabo de `STEP_TIMEOUT_MS` no
+llegó ni el modal ni el control siguiente, la ejecución falla y se reintenta
+(`MAX_ATTEMPTS`) en vez de dar por buena la ausencia de modal. «No sé» no es
+«hay cita».
 
 ---
 

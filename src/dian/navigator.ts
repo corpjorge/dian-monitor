@@ -4,6 +4,7 @@ import { CaptchaDetectedError, ElementNotFoundError, NavigationError } from '../
 import { logger } from '../utils/logger.js';
 import { COLOMBIA_TZ } from '../utils/time.js';
 import {
+  BusyControl,
   ButtonListControl,
   CalendarControl,
   type ControlOption,
@@ -114,6 +115,7 @@ export class DianNavigator {
       throw new ElementNotFoundError(`No se encontró el botón "${HOME_TILE_SCHEDULE}".`);
     }
     logger.info(`Clic en "${HOME_TILE_SCHEDULE}"`);
+    await this.settle();
   }
 
   buttons(name: string): ButtonListControl {
@@ -135,6 +137,10 @@ export class DianNavigator {
 
   modal(): ModalControl {
     return new ModalControl(this.requirePage());
+  }
+
+  busy(): BusyControl {
+    return new BusyControl(this.requirePage());
   }
 
   /** Applies one configured step and returns the option actually selected. */
@@ -171,12 +177,18 @@ export class DianNavigator {
 
   /**
    * Waits for the portal to finish the round-trip triggered by a selection.
-   * Each choice fires a `Player.aspx/ValidadorValidar` POST; once the network
-   * is quiet the newly revealed control is in the DOM.
+   *
+   * Each choice fires a `Player.aspx/…` POST while the "Cargando" overlay covers
+   * the page. Network quiet alone is not enough — the player renders the answer
+   * *after* the response, and part of its work is synchronous, which starves the
+   * event loop and makes the page look idle while it is anything but. So the
+   * overlay is waited out explicitly; it is the portal's own "I am done" signal.
    */
   async settle(): Promise<void> {
     const page = this.requirePage();
     await page.waitForLoadState('networkidle', { timeout: this.config.stepTimeoutMs }).catch(() => undefined);
+    const idle = await this.busy().waitUntilIdle(this.config.stepTimeoutMs);
+    if (!idle) logger.debug('La pantalla de carga sigue visible tras esperar el paso');
     await this.assertNoCaptcha();
   }
 

@@ -18,7 +18,7 @@ export interface BuiltEmail {
 
 const REASON_LABEL: Record<string, string> = {
   'fechas-encontradas': 'Se encontraron fechas con cupo disponible.',
-  'flujo-avanzo': 'El trámite dejó de mostrar el mensaje de "sin especialidades" y el flujo avanzó.',
+  'flujo-avanzo': 'El portal habilitó el siguiente paso del flujo en lugar del mensaje de "sin especialidades".',
   'mensaje-desconocido': 'El portal mostró un mensaje distinto al habitual.',
   'sin-fechas-en-calendario': 'El flujo avanzó pero el calendario no ofrece días.',
   'sin-especialidades': 'No hay especialidades para los filtros seleccionados.',

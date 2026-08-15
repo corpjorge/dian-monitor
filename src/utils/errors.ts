@@ -7,6 +7,7 @@ export type ErrorCode =
   | 'CONFIGURATION_ERROR'
   | 'NAVIGATION_ERROR'
   | 'ELEMENT_NOT_FOUND'
+  | 'PORTAL_NOT_SETTLED'
   | 'DIAN_STRUCTURE_CHANGED'
   | 'NOTIFICATION_ERROR'
   | 'CAPTCHA_DETECTED'
@@ -39,6 +40,19 @@ export class NavigationError extends MonitorError {
 /** A control was expected on screen and never appeared. */
 export class ElementNotFoundError extends MonitorError {
   readonly code = 'ELEMENT_NOT_FOUND' as const;
+  override readonly retryable = true;
+}
+
+/**
+ * The portal never finished answering a selection: it stayed on "Cargando" (or
+ * went back to the splash) without showing either the modal or the next control.
+ *
+ * This is deliberately an error and not a verdict. "No sé" is not "hay cita":
+ * concluding availability from a loading screen is exactly the false alarm this
+ * error exists to prevent. Retrying usually clears it.
+ */
+export class PortalNotSettledError extends MonitorError {
+  readonly code = 'PORTAL_NOT_SETTLED' as const;
   override readonly retryable = true;
 }
 

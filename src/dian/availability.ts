@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { AppConfig } from '../config/env.js';
+import { PortalNotSettledError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { normalize } from '../utils/text.js';
 import { isoNow } from '../utils/time.js';
@@ -12,19 +13,23 @@ import type { DianNavigator } from './navigator.js';
 /**
  * Availability detection.
  *
- * The rule is deliberately *not* "search for the word 'disponible'". The portal
- * signals the absence of appointments structurally:
+ * The rule is deliberately *not* "search for the word 'disponible'", and just as
+ * deliberately *not* "no modal appeared in N seconds". The portal answers every
+ * selection in exactly one of two ways, and the monitor waits for one of them:
  *
- *  1. A modal appears with the exact text configured in
- *     `DIAN_NO_AVAILABILITY_MESSAGE` ("No se encontraron especialidades
- *     relacionadas según los filtros seleccionados."). That is the *only*
- *     unambiguous "nothing here" signal, and it is what the target combination
- *     (Persona Natural → Videoatención → Devoluciones) shows today.
- *  2. Any other modal message means the portal is saying something new →
- *     treated as a change worth notifying, flagged as `unknown-message`.
- *  3. No modal at all means the flow moved forward: the combination opened up.
- *     When the configuration goes deep enough, the calendar is then read to
- *     extract concrete dates and times.
+ *  1. A modal. With the exact text configured in `DIAN_NO_AVAILABILITY_MESSAGE`
+ *     ("No se encontraron especialidades relacionadas según los filtros
+ *     seleccionados.") it means there is nothing — that is what the target
+ *     combination (Persona Natural → Videoatención → Devoluciones) shows today.
+ *     Any *other* message means the portal is saying something new → alert.
+ *  2. The next control, populated. The combination opened up: choosing
+ *     "Devoluciones" reveals the "Trámite" select with real options. When the
+ *     configuration goes deeper, the calendar is then read for dates and times.
+ *
+ * Anything else — the "Cargando" overlay still up, the splash back on screen,
+ * the portal simply not responding — is *no answer at all*, and produces
+ * `PortalNotSettledError` rather than a verdict. Treating silence as good news
+ * is what alerted on a loading screen.
  */
 
 export interface AvailabilitySlotDate {
@@ -64,8 +69,8 @@ export interface AvailabilityResult {
 }
 
 export interface CheckOptions {
-  /** How long to wait for the portal's modal after a selection. */
-  modalWaitMs?: number;
+  /** How long to wait for the portal to answer one selection. */
+  settleTimeoutMs?: number;
 }
 
 /**
@@ -77,10 +82,11 @@ export async function checkAvailability(
   config: AppConfig,
   options: CheckOptions = {},
 ): Promise<AvailabilityResult> {
-  const modalWaitMs = options.modalWaitMs ?? 6_000;
+  const settleTimeoutMs = options.settleTimeoutMs ?? config.stepTimeoutMs;
   const steps = buildFlow(config);
   const completed: string[] = [];
   const base = baseResult(config);
+  let discovered: string[] = [];
 
   await navigator.startScheduling();
 
@@ -88,22 +94,42 @@ export async function checkAvailability(
     await navigator.applyStep(step);
     completed.push(`${step.title}=${step.value}`);
 
-    // After each selection the portal may answer with a modal.
-    const message = await navigator.modal().waitForMessage(index === steps.length - 1 ? modalWaitMs : 1_500);
-    if (message) {
-      return verdictFromModal(base, message, config, completed);
+    // The control this selection should reveal when there is something behind
+    // it: the next configured step, or — on the last one — whatever the portal
+    // would show next. Undefined only when the flow already reaches the
+    // calendar, where the dates themselves are the evidence.
+    const following = steps[index + 1] ?? nextControlAfter(steps);
+
+    // A step that changes screen reveals nothing by itself, so there we only
+    // wait for the portal to go quiet without a modal, click "Siguiente", and
+    // look for the new control afterwards.
+    const answer = await answerAfter(
+      navigator,
+      step.advancesScreen ? undefined : following,
+      settleTimeoutMs,
+      step.title,
+    );
+    if (answer.kind === 'modal') return verdictFromModal(base, answer.message, config, completed);
+    let revealed = answer.options;
+
+    if (step.advancesScreen) {
+      await navigator.advance();
+      const afterAdvance = await answerAfter(navigator, following, settleTimeoutMs, 'Siguiente');
+      if (afterAdvance.kind === 'modal') {
+        return verdictFromModal(base, afterAdvance.message, config, completed);
+      }
+      revealed = afterAdvance.options;
     }
 
-    if (step.advancesScreen && index < steps.length - 1) {
-      await navigator.advance();
-      const afterAdvance = await navigator.modal().waitForMessage(1_500);
-      if (afterAdvance) return verdictFromModal(base, afterAdvance, config, completed);
-    }
+    if (index === steps.length - 1) discovered = revealed;
   }
 
-  // No modal: the combination is open. Collect everything we can see.
-  const discovered = await describeNextControl(navigator, steps);
-  logger.success('El flujo avanzó sin el mensaje de "sin especialidades"');
+  // The portal revealed the next step instead of the "sin especialidades"
+  // modal: the combination is open.
+  logger.success('El portal habilitó el siguiente paso del flujo');
+  if (discovered.length > 0) {
+    logger.info('Opciones visibles tras el último paso', { total: discovered.length });
+  }
 
   if (!flowReachesCalendar(config)) {
     return {
@@ -124,6 +150,107 @@ export async function checkAvailability(
     stepsCompleted: completed,
     discoveredOptions: discovered,
   };
+}
+
+/**
+ * One of the portal's two possible answers to a selection. There is no third
+ * member on purpose: "still loading" is not an answer, it is a reason to keep
+ * waiting (and, past the deadline, to fail the run).
+ */
+export type PortalAnswer =
+  | { kind: 'modal'; message: string }
+  | { kind: 'revealed'; options: string[] };
+
+/**
+ * What `waitForAnswer` needs from the page. Narrow on purpose: it keeps the
+ * waiting rule — the part that decides whether an alert goes out — testable
+ * without a browser.
+ */
+export interface PortalProbe {
+  /** True while the "Cargando" overlay or the splash covers the page. */
+  isBusy(): Promise<boolean>;
+  /** Text of the visible modal, or null when there is none. */
+  modalMessage(): Promise<string | null>;
+  /**
+   * Options of the control this selection should reveal. `null` when there is
+   * no such control to look at, in which case going quiet is answer enough.
+   */
+  revealedOptions(): Promise<string[] | null>;
+  wait(ms: number): Promise<void>;
+}
+
+/** How often the portal is re-checked while it is still working. */
+const POLL_MS = 300;
+
+/**
+ * Waits for the portal's answer on a real page.
+ *
+ * `expected` is the control this selection should reveal; when it is undefined
+ * there is nothing to look for — the portal going quiet without a modal is the
+ * whole answer (the step that only unlocks "Siguiente", or the last one before
+ * the calendar).
+ */
+async function answerAfter(
+  navigator: DianNavigator,
+  expected: FlowStep | undefined,
+  timeoutMs: number,
+  stepTitle: string,
+): Promise<PortalAnswer> {
+  const busy = navigator.busy();
+  const modal = navigator.modal();
+
+  const probe: PortalProbe = {
+    isBusy: () => busy.isBusy(),
+    modalMessage: () => modal.message(),
+    revealedOptions: async () => {
+      if (!expected) return null;
+      const options = await navigator.optionsOf(expected).catch(() => [] as ControlOption[]);
+      return options.map((o) => o.label);
+    },
+    wait: (ms) => navigator.wait(ms),
+  };
+
+  return waitForAnswer(probe, timeoutMs, () => ({
+    paso: stepTitle,
+    esperaba: expected ? expected.title : '(sólo que el portal terminara)',
+  }));
+}
+
+/**
+ * Polls until the portal actually answers, and refuses to invent an answer.
+ *
+ * The order matters: nothing on screen is read while the portal is busy, so a
+ * half-drawn wizard behind the overlay can never be mistaken for progress.
+ */
+export async function waitForAnswer(
+  probe: PortalProbe,
+  timeoutMs: number,
+  describe: () => Record<string, unknown> = () => ({}),
+): Promise<PortalAnswer> {
+  const deadline = Date.now() + timeoutMs;
+  let sawBusy = false;
+
+  for (;;) {
+    if (await probe.isBusy()) {
+      sawBusy = true;
+    } else {
+      const message = await probe.modalMessage();
+      if (message) return { kind: 'modal', message };
+
+      const options = await probe.revealedOptions();
+      if (options === null) return { kind: 'revealed', options: [] };
+      if (options.length > 0) return { kind: 'revealed', options };
+    }
+
+    if (Date.now() >= deadline) {
+      throw new PortalNotSettledError(
+        'El portal no respondió a la selección: se quedó cargando y no mostró ni el mensaje ' +
+          'habitual ni el siguiente paso.',
+        { ...describe(), pantallaDeCargaVista: sawBusy, esperaMs: timeoutMs },
+      );
+    }
+    await probe.wait(POLL_MS);
+  }
 }
 
 function baseResult(config: AppConfig): AvailabilityResult {
@@ -161,21 +288,8 @@ function verdictFromModal(
   return { ...base, available: true, reason: 'mensaje-desconocido', message, stepsCompleted: completed };
 }
 
-/** Reads the options of the control right after the last completed step. */
-async function describeNextControl(navigator: DianNavigator, steps: FlowStep[]): Promise<string[]> {
-  const nextControl = nextControlAfter(steps);
-  if (!nextControl) return [];
-  const options = await navigator
-    .optionsOf(nextControl)
-    .catch(() => [] as ControlOption[]);
-  if (options.length > 0) {
-    logger.info(`Opciones visibles en "${nextControl.title}"`, { total: options.length });
-  }
-  return options.map((o) => o.label);
-}
-
 /** The control the portal would reveal next, given the configured steps. */
-function nextControlAfter(steps: FlowStep[]): FlowStep | undefined {
+export function nextControlAfter(steps: FlowStep[]): FlowStep | undefined {
   const order: FlowStep[] = [
     { title: 'Tipo de servicio', control: CONTROL.service, kind: 'buttons', value: '' },
     { title: 'Trámite', control: CONTROL.procedure, kind: 'select', value: '' },

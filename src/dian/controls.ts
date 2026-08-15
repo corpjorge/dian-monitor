@@ -309,6 +309,46 @@ export function kendoValueToIso(rawValue: string): string {
   return `${year}-${mm}-${dd}`;
 }
 
+/**
+ * The two screens that mean "the portal is still working".
+ *
+ *  - `#mpcWPdivCargando` — the dark "Cargando" overlay the player raises around
+ *    every round-trip, on top of everything (z-index 21000).
+ *  - `.splash` — the bootstrap screen, shown when the player rebuilds itself
+ *    from scratch (session expired, page reloaded).
+ *
+ * While either is up the wizard has not answered yet, so nothing on the page
+ * can be read as a verdict. Reading it anyway is what made the monitor alert on
+ * a loading screen.
+ */
+export class BusyControl {
+  constructor(private readonly page: Page) {}
+
+  /** True while the "Cargando" overlay covers the page. */
+  async isLoading(): Promise<boolean> {
+    return (await this.page.locator(SELECTOR.loading).filter(VISIBLE).count().catch(() => 0)) > 0;
+  }
+
+  /** True while the player is bootstrapping (splash with the DIAN logo). */
+  async isBootstrapping(): Promise<boolean> {
+    return (await this.page.locator(SELECTOR.splash).filter(VISIBLE).count().catch(() => 0)) > 0;
+  }
+
+  async isBusy(): Promise<boolean> {
+    return (await this.isLoading()) || (await this.isBootstrapping());
+  }
+
+  /** Waits for both indicators to clear. Returns false when they never do. */
+  async waitUntilIdle(timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      if (!(await this.isBusy())) return true;
+      if (Date.now() >= deadline) return false;
+      await this.page.waitForTimeout(200);
+    }
+  }
+}
+
 /** Labels that are buttons inside a modal, never the message itself. */
 const MODAL_BUTTON_LABELS = /^(aceptar|cerrar|cancelar|continuar|volver|entendido|ok)$/i;
 

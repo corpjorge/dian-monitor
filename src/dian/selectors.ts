@@ -38,6 +38,15 @@ export type ControlName = (typeof CONTROL)[keyof typeof CONTROL];
 export const SELECTOR = {
   /** Loading splash shown until the player finishes bootstrapping. */
   splash: '.splash',
+  /**
+   * Full-screen "Cargando" overlay raised around every round-trip.
+   *
+   * The player creates it on demand (`Ciel.MPC.WebPlayer.MostrarDivCargando()`
+   * → `<div id="mpcWPdivCargando" class="pantallaCargando">`) and afterwards
+   * only calls `.hide()` on it, so the node stays in the DOM for the rest of the
+   * session: what matters is whether it is *visible*, never whether it exists.
+   */
+  loading: '#mpcWPdivCargando, .pantallaCargando',
   /** Home tiles: "Agendar cita" / "Gestionar cita". */
   homeTile: '.btnInicio',
   /** An option inside a button-list control. */
