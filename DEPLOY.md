@@ -191,6 +191,144 @@ build incluye un `npm run typecheck`: si el código no compila, falla ahí y no
 llega a producción. Tarda un par de minutos la primera vez, porque descarga la
 imagen de Playwright.
 
+## Despliegue en un VPS
+
+Este es el escenario que mejor encaja con el diseño del programa: una máquina
+propia, un planificador del sistema y nada de servicios web. Además no caduca
+ni depende de planes.
+
+### Qué necesita la máquina
+
+- **2 GB de RAM recomendados.** El pico de una revisión son 502 MB y hay que
+  dejar sitio al sistema. Con 1 GB funciona, pero añade swap: si el sistema se
+  queda sin memoria, mata Chromium a media revisión y esa vuelta se pierde sin
+  aviso.
+- **Disco:** unos 3 GB con Docker (la imagen de Playwright es grande), ~1 GB sin
+  Docker.
+- **Salida a internet.** No hay que abrir ningún puerto ni configurar firewall
+  de entrada: el monitor no escucha nada, sólo hace peticiones salientes.
+- Debian o Ubuntu recientes. No hace falta entorno gráfico.
+
+### Camino A: con Docker (recomendado)
+
+La imagen ya trae Chromium con todas sus librerías de sistema y en la versión
+exacta que espera el código. Te ahorra la parte que más suele fallar.
+
+```bash
+curl -fsSL https://get.docker.com | sh
+
+sudo mkdir -p /opt/dian-monitor && cd /opt/dian-monitor
+sudo git clone https://github.com/corpjorge/dian-monitor.git .
+sudo docker build -t dian-monitor .
+
+# Variables: copia .env.example, rellénalo y protégelo
+sudo cp .env.example .env
+sudo nano .env
+sudo chmod 600 .env
+```
+
+En `.env`, para este camino, deja `STATE_FILE_PATH=/app/data/state.json`: es la
+ruta *dentro* del contenedor, y el volumen la lleva al disco del servidor.
+
+Una ejecución de prueba, en primer plano, para ver qué pasa:
+
+```bash
+sudo docker run --rm --env-file /opt/dian-monitor/.env \
+  -v /opt/dian-monitor/data:/app/data dian-monitor
+```
+
+### Camino B: sin Docker, Node directo
+
+```bash
+# Node 20 o superior (los repos de Debian/Ubuntu suelen traer versiones viejas;
+# usa nodesource o nvm si tu distribución se queda corta)
+node --version
+
+sudo mkdir -p /opt/dian-monitor && cd /opt/dian-monitor
+sudo git clone https://github.com/corpjorge/dian-monitor.git .
+npm ci
+npx playwright install --with-deps chromium   # --with-deps necesita root
+npm run monitor
+```
+
+Aquí `STATE_FILE_PATH` debe apuntar a una ruta real del servidor, por ejemplo
+`/opt/dian-monitor/data/state.json`, en un directorio que exista y sea
+escribible por el usuario que ejecuta el monitor.
+
+### Programarlo con systemd (recomendado)
+
+Encaja mejor que `cron` porque el monitor es exactamente un `oneshot`: arranca,
+hace su trabajo y termina. Además los logs quedan en `journalctl` y systemd no
+lanza una revisión si la anterior sigue viva.
+
+`/etc/systemd/system/dian-monitor.service`:
+
+```ini
+[Unit]
+Description=Monitor de citas DIAN
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=dian
+WorkingDirectory=/opt/dian-monitor
+EnvironmentFile=/opt/dian-monitor/.env
+ExecStart=/usr/bin/npm run monitor
+```
+
+Con Docker, cambia `ExecStart` por el `docker run --rm --env-file ... -v ...` de
+arriba y quita `EnvironmentFile` (las variables ya van dentro del contenedor).
+
+`/etc/systemd/system/dian-monitor.timer`:
+
+```ini
+[Unit]
+Description=Revisa la DIAN cada 5 minutos
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now dian-monitor.timer
+
+systemctl list-timers dian-monitor.timer     # cuándo toca la próxima
+journalctl -u dian-monitor.service -f        # los logs, en vivo
+```
+
+### Alternativa con cron
+
+```cron
+*/5 * * * * cd /opt/dian-monitor && /usr/bin/npm run monitor >> /var/log/dian-monitor.log 2>&1
+```
+
+Dos trampas clásicas de `cron`: su `PATH` es mínimo —usa rutas absolutas para
+`npm`/`node`, o defínelo arriba del crontab— y no rota ese fichero de log solo,
+así que añádele un `logrotate` o acabará comiéndose el disco.
+
+### Seguridad y permisos
+
+- El `.env` contiene el token del bot: `chmod 600` y propiedad del usuario que
+  ejecuta el monitor.
+- **No hace falta root** para ejecutarlo. El navegador ya se lanza con
+  `--no-sandbox` y `--disable-dev-shm-usage`, precisamente para funcionar en
+  contenedores y máquinas sin privilegios.
+- Crea un usuario dedicado (`sudo useradd -r -s /usr/sbin/nologin dian`) y dale
+  la propiedad de `/opt/dian-monitor`.
+
+### Verificación
+
+La misma de siempre: con `journalctl -u dian-monitor.service` deben verse **dos
+ejecuciones separadas cinco minutos**, ambas acabando en `MONITOR_OK_...` y con
+el contador `ejecucion=N` subiendo. Si sólo hay una, el timer no quedó activo:
+compruébalo con `systemctl list-timers`.
+
 ## Las dos piezas que no son código
 
 ### La programación
