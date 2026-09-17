@@ -65,6 +65,36 @@ compartido. Si prefieres no manejar el bot ajeno, crea uno propio con
 descubrir el `chat_id`: ese comando comprueba el token y lista los chats que el
 bot conoce.
 
+## Si quien despliega es un agente de IA
+
+Puede hacerlo solo: clonar, instalar dependencias, crear proyecto y servicio,
+cargar las variables, crear el volumen, desplegar, leer los logs y verificar.
+
+Tiene que pedírselo a una persona:
+
+1. **Autenticación.** `railway login` abre un navegador. Para trabajar sin él,
+   la persona genera un token en Railway y se lo pasa como variable de entorno:
+   `RAILWAY_API_TOKEN` para acciones de cuenta (crear el proyecto) o
+   `RAILWAY_TOKEN` para actuar sobre un proyecto ya creado —
+   `RAILWAY_API_TOKEN=xxx railway up`. También existe
+   `railway login --browserless`, que imprime un código que la persona aprueba.
+2. **El plan y la tarjeta.** Sin plan activo Railway no despliega, y eso no lo
+   resuelve un agente.
+3. **Lo que ocurre dentro de Telegram.** Crear el bot con @BotFather, crear el
+   grupo y añadir a la gente exige una cuenta personal de Telegram. Con el token
+   ya en la mano, en cambio, el agente sí puede descubrir el `chat_id`
+   (`npm run telegram:setup`), cargar las variables y enviar el mensaje de
+   prueba (`npm run telegram:setup -- --test`).
+
+El propio CLI ofrece ayuda para esto: `railway setup agent -y` instala las
+skills de Railway y su servidor MCP.
+
+**Criterio de aceptación**, para saber cuándo ha terminado de verdad: en los
+logs deben verse **dos ejecuciones consecutivas separadas cinco minutos**, ambas
+acabando en `MONITOR_OK_...`, con el contador `ejecucion=N` subiendo entre una y
+otra. Una sola ejecución correcta no prueba nada: significa que el despliegue
+funcionó, no que quedara programado.
+
 ## Variables de entorno
 
 Todo se configura por entorno; el código no lee `process.env` en ningún sitio
